@@ -1,0 +1,12 @@
+services:
+  wer-wuerde-eher:
+    build: .
+    ports:
+      - "3000:3000"
+    volumes:
+      - game-data:/app/data
+    environment:
+      PORT: 3000
+
+volumes:
+  game-data:

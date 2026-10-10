@@ -1,6 +1,7 @@
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
+const pocketbase = require("./pocketbase");
 
 const publicDir = path.join(__dirname, "public");
 const dataDir = path.join(__dirname, "data");
@@ -14,6 +15,43 @@ const defaultQuestions = [
 let state = loadState();
 
 fs.mkdirSync(dataDir, { recursive: true });
+
+async function importPlayers() {
+  const records = await pocketbase.list("players");
+  for (const name of state.players) {
+    if (records.some((record) => record.name.toLocaleLowerCase("de") === name.toLocaleLowerCase("de"))) continue;
+    await pocketbase.add("players", { name, normalized_name: name.toLocaleLowerCase("de") });
+  }
+}
+
+async function clearPlayers() {
+  const records = await pocketbase.list("players");
+  for (const record of records) await pocketbase.remove("players", record.id);
+}
+
+async function syncQuestions() {
+  const records = await pocketbase.list("questions");
+  for (const record of records) await pocketbase.remove("questions", record.id);
+  for (const [index, text] of state.questions.entries()) {
+    await pocketbase.add("questions", { text, position: index + 1 });
+  }
+}
+
+async function initialize() {
+  await pocketbase.ensureCollections();
+  const [players, questions] = await Promise.all([
+    pocketbase.list("players"),
+    pocketbase.list("questions", "+position")
+  ]);
+
+  // Import the existing file-backed data once, then use PocketBase as the source
+  // of truth for participants and the question queue.
+  if (!players.length && state.players.length) await importPlayers();
+  else state.players = players.map((record) => record.name);
+  if (!questions.length && state.questions.length) await syncQuestions();
+  else if (questions.length) state.questions = questions.map((record) => record.text);
+  saveState();
+}
 
 function loadState() {
   try {
@@ -103,7 +141,10 @@ const server = http.createServer(async (req, res) => {
       if (state.started) return json(res, 400, { error: "Die Runde läuft bereits. Warte auf die nächste Runde." });
       const existingPlayer = state.players.find((player) => player.toLocaleLowerCase("de") === name.toLocaleLowerCase("de"));
       if (existingPlayer && existingPlayer !== name) return json(res, 400, { error: "Dieser Name ist bereits im Raum." });
-      if (!existingPlayer) state.players.push(name);
+      if (!existingPlayer) {
+        await pocketbase.add("players", { name, normalized_name: name.toLocaleLowerCase("de") });
+        state.players.push(name);
+      }
       saveState();
       return json(res, 200, { name: existingPlayer || name, state: publicState() });
     }
@@ -130,6 +171,7 @@ const server = http.createServer(async (req, res) => {
         if (state.questions.length === 1) return json(res, 400, { error: "Mindestens eine Frage muss in der Runde bleiben." });
         state.questions.splice(index, 1);
       }
+      await syncQuestions();
       saveState();
       return json(res, 200, { state: adminState() });
     }
@@ -141,6 +183,7 @@ const server = http.createServer(async (req, res) => {
       if (body.action === "reveal" && state.started) state.revealed = true;
       if (body.action === "next" && state.revealed && state.currentQuestion < state.questions.length - 1) { state.currentQuestion += 1; state.revealed = false; }
       if (body.action === "reset") state = { started: false, currentQuestion: 0, revealed: false, players: [], questions: state.questions, votes: {} };
+      if (body.action === "reset") await clearPlayers();
       saveState();
       return json(res, 200, { state: adminState() });
     }
@@ -150,4 +193,9 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(process.env.PORT || 3000, "0.0.0.0", () => console.log("Wer würde eher läuft auf Port 3000"));
+initialize().then(() => {
+  server.listen(process.env.PORT || 3000, "0.0.0.0", () => console.log("Wer würde eher läuft auf Port 3000"));
+}).catch((error) => {
+  console.error(`PocketBase startup failed: ${error.message}`);
+  process.exit(1);
+});

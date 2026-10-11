@@ -31,9 +31,11 @@ jobs:
           SMARTALFRED_TOKEN: ${{ secrets.SMARTALFRED_TOKEN }}
         run: |
           set -o pipefail
+          # Outside the checkout: whatever is in it is packed up and sent as the code.
+          log="$RUNNER_TEMP/deploy.log"
           curl -fsSL https://smartalfred.com/deploy.sh | sh -s -- \
-            --project "$PROJECT" --preview "$PREVIEW" 2>&1 | tee deploy.log
-          url="$(grep -oE 'https://[A-Za-z0-9.-]+\.smartalfred\.com' deploy.log | sort -u | head -n 1)"
+            --project "$PROJECT" --preview "$PREVIEW" 2>&1 | tee "$log"
+          url="$(grep -oE 'https://[A-Za-z0-9.-]+\.smartalfred\.com' "$log" | sort -u | head -n 1)"
           echo "url=$url" >>"$GITHUB_OUTPUT"
 
       - name: Comment the preview address

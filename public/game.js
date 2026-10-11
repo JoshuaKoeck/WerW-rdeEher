@@ -20,7 +20,7 @@ async function request(url, options = {}) {
 
 function drawResults(votes) {
   const max = Math.max(1, ...Object.values(votes));
-  $("#results").innerHTML = `<p class="kicker">Auflösung</p><h2>Die Gruppe hat entschieden</h2>${Object.entries(votes).sort((a,b) => b[1]-a[1]).map(([name,count]) => `<div class="result"><strong>${name}</strong><div class="bar"><i style="width:${count / max * 100}%"></i></div><span>${count}</span></div>`).join("")}`;
+  $("#results").innerHTML = `<p class="kicker">Auflösung</p><h2>Die Gruppe hat entschieden</h2>${Object.entries(votes).sort((a,b) => b[1]-a[1]).map(([name,count]) => `<div class="result"><strong>${escapeHtml(name)}</strong><div class="bar"><i style="width:${count / max * 100}%"></i></div><span>${count}</span></div>`).join("")}`;
 }
 
 function render(state) {

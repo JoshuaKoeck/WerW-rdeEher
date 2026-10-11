@@ -1,0 +1,77 @@
+name: Preview
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+
+# One run per pull request; a new push replaces the one still deploying.
+concurrency:
+  group: preview-${{ github.event.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+env:
+  PROJECT: d-fine
+  PREVIEW: pr-${{ github.event.number }}
+
+jobs:
+  deploy:
+    # Pull requests from forks don't get the token.
+    if: github.event.action != 'closed' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy to preview
+        id: deploy
+        env:
+          SMARTALFRED_TOKEN: ${{ secrets.SMARTALFRED_TOKEN }}
+        run: |
+          set -o pipefail
+          # Outside the checkout: whatever is in it is packed up and sent as the code.
+          log="$RUNNER_TEMP/deploy.log"
+          curl -fsSL https://smartalfred.com/deploy.sh | sh -s -- \
+            --project "$PROJECT" --preview "$PREVIEW" 2>&1 | tee "$log"
+          url="$(grep -oE 'https://[A-Za-z0-9.-]+\.smartalfred\.com' "$log" | sort -u | head -n 1)"
+          echo "url=$url" >>"$GITHUB_OUTPUT"
+
+      - name: Comment the preview address
+        if: steps.deploy.outputs.url != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          URL: ${{ steps.deploy.outputs.url }}
+        run: |
+          cat >body.md <<EOF
+          <!-- smartalfred-preview -->
+          ### Preview environment
+
+          **$URL**
+
+          Preview \`$PREVIEW\` of \`$PROJECT\` — a throwaway copy of the project with its own
+          addresses and empty volumes. Redeployed on every push; ends when this pull request closes
+          (or after 24h on its own).
+
+          <sub>commit ${{ github.event.pull_request.head.sha }}</sub>
+          EOF
+          jq -n --rawfile body body.md '{body: $body}' >payload.json
+          id="$(gh api "repos/$GITHUB_REPOSITORY/issues/${{ github.event.number }}/comments" \
+            --jq 'map(select(.body | contains("<!-- smartalfred-preview -->"))) | .[0].id // empty')"
+          if [ -n "$id" ]; then
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" --input payload.json --silent
+          else
+            gh api -X POST "repos/$GITHUB_REPOSITORY/issues/${{ github.event.number }}/comments" --input payload.json --silent
+          fi
+
+  teardown:
+    if: github.event.action == 'closed' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - name: End the preview
+        env:
+          SMARTALFRED_TOKEN: ${{ secrets.SMARTALFRED_TOKEN }}
+        run: |
+          curl -fsSL https://smartalfred.com/deploy.sh | sh -s -- \
+            --project "$PROJECT" --end-preview "$PREVIEW"

@@ -1,20 +1,11 @@
 services:
   wer-wuerde-eher:
     build: .
+    restart: unless-stopped
     ports:
       - "3000:3000"
-    volumes:
-      - game-data:/app/data
     environment:
       PORT: 3000
-
-  redis:
-    image: redis:7-alpine
-
-  whoami:
-    image: traefik/whoami
-    ports:
-      - "8080:80"
-
-volumes:
-  game-data:
+      POCKETBASE_URL: ${POCKETBASE_URL:-http://pocketbase:8090}
+      POCKETBASE_ADMIN_EMAIL: ${POCKETBASE_ADMIN_EMAIL:?Set POCKETBASE_ADMIN_EMAIL}
+      POCKETBASE_ADMIN_PASSWORD: ${POCKETBASE_ADMIN_PASSWORD:?Set POCKETBASE_ADMIN_PASSWORD}
